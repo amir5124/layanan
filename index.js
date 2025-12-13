@@ -109,31 +109,30 @@ const uploadFields = upload.fields([{ name: 'ktp', maxCount: 1 }, { name: 'selfi
 
 // ✅ Endpoint POST untuk membuat VA
 // 1. CREATE VA (Final & Sinkron dengan Frontend)
+// 1. CREATE VA (Tanpa Database)
 app.post('/create-va', uploadFields, async (req, res) => {
     try {
-        logToFile("📩 Request VA Masuk");
+        logToFile("📩 Request VA (Direct) Masuk");
 
-        // Data dari Frontend (FormData)
+        // Ambil data dari req.body (Multipart/FormData)
         const {
-            nama, email, nik, kk, item,
-            amount, method, biayaAdmin, nomorHp
+            nama, email, amount, method
         } = req.body;
 
-        // Validasi Dasar
-        if (!amount || !method) {
-            return res.status(400).json({ error: "Amount dan Method (Bank Code) wajib diisi" });
+        // Validasi input minimal
+        if (!amount || !method || !nama) {
+            return res.status(400).json({ error: "Nama, Amount, dan Method wajib diisi" });
         }
 
         const partner_reff = generatePartnerReff();
         const expired = getExpiredTimestamp(1440); // 24 Jam
         const finalEmail = (email && email.trim() !== "") ? email : "linkutransport@gmail.com";
-        const url_callback = "https://topuplinku.siappgo.id/callback";
 
-        // Generate Signature (Mapping field harus pas)
+        // Generate Signature sesuai pola objek Anda
         const signature = generateSignaturePOST({
             amount: amount,
             expired: expired,
-            bank_code: method,       // Frontend kirim 'method' sebagai kode bank (e.g., 014)
+            bank_code: method,       // Kode bank (014, 008, dll)
             partner_reff: partner_reff,
             customer_id: nama,
             customer_name: nama,
@@ -142,7 +141,7 @@ app.post('/create-va', uploadFields, async (req, res) => {
             serverKey: serverKey
         });
 
-        // Payload untuk API LinkQu
+        // Payload API LinkQu
         const payload = {
             amount: amount,
             bank_code: method,
@@ -154,7 +153,7 @@ app.post('/create-va', uploadFields, async (req, res) => {
             customer_id: nama,
             customer_name: nama,
             customer_email: finalEmail,
-            url_callback: url_callback
+            url_callback: "https://topuplinku.siappgo.id/callback"
         };
 
         const headers = {
@@ -163,39 +162,24 @@ app.post('/create-va', uploadFields, async (req, res) => {
             'Content-Type': 'application/json'
         };
 
-        logToFile(`📤 Mengirim VA ke LinkQu: ${partner_reff}`);
+        logToFile(`📤 Menembak API LinkQu VA: ${partner_reff}`);
+
         const response = await axios.post('https://api.linkqu.id/linkqu-partner/transaction/create/va', payload, { headers });
-        const result = response.data;
 
-        // 🐘 Simpan ke Database (Tabel Orders)
-        await db.execute(
-            `INSERT INTO orders (
-                nama_paket, harga_paket, biaya_admin, total_bayar, 
-                nama_user, nomor_hp, nik, nomor_kk, email, 
-                metode_pembayaran, kode_bank, partner_reff, 
-                virtual_account, waktu_expired, status_pembayaran
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'VA', ?, ?, ?, ?, 'PENDING')`,
-            [
-                item, (amount - biayaAdmin), biayaAdmin, amount,
-                nama, nomorHp, nik, kk, finalEmail,
-                method, partner_reff, result.virtual_account,
-                moment(expired, 'YYYYMMDDHHmmss').format('YYYY-MM-DD HH:mm:ss')
-            ]
-        );
+        logToFile(`✅ LinkQu Response: ${JSON.stringify(response.data)}`);
 
-        logToFile(`✅ VA Berhasil: ${result.virtual_account}`);
-        res.json(result);
+        // Kirim response LinkQu langsung ke frontend
+        res.json(response.data);
 
     } catch (err) {
         const errorDetail = err.response?.data || err.message;
-        logToFile(`❌ Gagal membuat VA: ${JSON.stringify(errorDetail)}`);
+        logToFile(`❌ VA Error: ${JSON.stringify(errorDetail)}`);
         res.status(500).json({
             error: "Gagal membuat VA",
             detail: errorDetail
         });
     }
 });
-
 
 app.post('/create-qris', async (req, res) => {
     try {
