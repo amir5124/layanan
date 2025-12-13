@@ -33,7 +33,14 @@ const db = mysql.createPool({
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-// --- FUNGSI UTILITY & LOGGING ---
+function logToFile(message) {
+    const logPath = path.join(__dirname, 'stderr.log');
+    const timestamp = new Date().toISOString();
+    const fullMessage = `[${timestamp}] ${message}\n`;
+    fs.appendFile(logPath, fullMessage, (err) => {
+        if (err) console.error("❌ Gagal menulis log:", err);
+    });
+}
 
 
 function getExpiredTimestamp(minutesFromNow = 15) {
