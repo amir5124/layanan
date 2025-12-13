@@ -98,7 +98,7 @@ function generateSignatureQRIS({
 
 // 🧾 Fungsi membuat kode unik partner_reff
 function generatePartnerReff() {
-    const prefix = 'INV-782372373627';
+    const prefix = 'INV-';
     const timestamp = Date.now();
     const randomStr = crypto.randomBytes(4).toString('hex');
     return `${prefix}-${timestamp}-${randomStr}`;
