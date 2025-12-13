@@ -97,6 +97,9 @@ function generatePartnerReff() {
     return `${prefix}-${timestamp}-${randomStr}`;
 }
 
+const uploadFields = upload.fields([{ name: 'ktp', maxCount: 1 }, { name: 'selfie', maxCount: 1 }]);
+
+
 // ✅ Endpoint POST untuk membuat VA
 // 1. CREATE VA (Final & Sinkron dengan Frontend)
 app.post('/create-va', uploadFields, async (req, res) => {
@@ -295,81 +298,8 @@ app.post('/create-qris', async (req, res) => {
 
 // --- ENDPOINTS ---
 
-const uploadFields = upload.fields([{ name: 'ktp', maxCount: 1 }, { name: 'selfie', maxCount: 1 }]);
 
-// 1. CREATE VA
-app.post('/create-va', uploadFields, async (req, res) => {
-    try {
-        const body = req.body;
-        const partner_reff = generatePartnerReff();
-        const expired = getExpiredTimestamp(1440);
-        const finalEmail = (body.email && body.email.trim() !== "") ? body.email : "linkutransport@gmail.com";
 
-        const signature = generateSignaturePOST({
-            amount: body.amount, expired, bank_code: body.method, partner_reff,
-            customer_id: body.nama, customer_name: body.nama, customer_email: finalEmail,
-            clientId, serverKey
-        });
-
-        const payload = {
-            amount: body.amount, bank_code: body.method, partner_reff, username, pin, expired, signature,
-            customer_id: body.nama, customer_name: body.nama, customer_email: finalEmail
-        };
-
-        const response = await axios.post('https://api.linkqu.id/linkqu-partner/transaction/create/va', payload, {
-            headers: { 'client-id': clientId, 'client-secret': clientSecret }
-        });
-
-        await db.execute(
-            `INSERT INTO orders (nama_paket, harga_paket, biaya_admin, total_bayar, nama_user, nomor_hp, nik, nomor_kk, email, metode_pembayaran, kode_bank, partner_reff, virtual_account, waktu_expired, status_pembayaran) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
-            [body.item, (body.amount - body.biayaAdmin), body.biayaAdmin, body.amount, body.nama, body.nomorHp, body.nik, body.kk, finalEmail, 'VA', body.method, partner_reff, response.data.virtual_account, moment(expired, 'YYYYMMDDHHmmss').format('YYYY-MM-DD HH:mm:ss')]
-        );
-
-        console.log(`✅ VA Created: ${partner_reff}`);
-        res.json(response.data);
-    } catch (err) {
-        console.log(`❌ VA Error: ${err.response?.data?.message || err.message}`);
-        res.status(500).json({ error: "Gagal VA", detail: err.response?.data || err.message });
-    }
-});
-
-// 2. CREATE QRIS
-app.post('/create-qris', uploadFields, async (req, res) => {
-    try {
-        const body = req.body;
-        const partner_reff = generatePartnerReff();
-        const expired = getExpiredTimestamp(30);
-        const finalEmail = (body.email && body.email.trim() !== "") ? body.email : "linkutransport@gmail.com";
-
-        const signature = generateSignatureQRIS({
-            amount: body.amount, expired, partner_reff,
-            customer_id: body.nama, customer_name: body.nama, customer_email: finalEmail,
-            clientId, serverKey
-        });
-
-        const payload = {
-            amount: body.amount, partner_reff, username, pin, expired, signature,
-            customer_id: body.nama, customer_name: body.nama, customer_email: finalEmail
-        };
-
-        const response = await axios.post('https://api.linkqu.id/linkqu-partner/transaction/create/qris', payload, {
-            headers: { 'client-id': clientId, 'client-secret': clientSecret }
-        });
-
-        await db.execute(
-            `INSERT INTO orders (nama_paket, harga_paket, biaya_admin, total_bayar, nama_user, nomor_hp, nik, nomor_kk, email, metode_pembayaran, kode_bank, partner_reff, qris_image_url, waktu_expired, status_pembayaran) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'QRIS', 'QRIS', ?, ?, ?, 'PENDING')`,
-            [body.item, (body.amount - body.biayaAdmin), body.biayaAdmin, body.amount, body.nama, body.nomorHp, body.nik, body.kk, finalEmail, partner_reff, response.data.imageqris, moment(expired, 'YYYYMMDDHHmmss').format('YYYY-MM-DD HH:mm:ss')]
-        );
-
-        console.log(`✅ QRIS Created: ${partner_reff}`);
-        res.json(response.data);
-    } catch (err) {
-        console.log(`❌ QRIS Error: ${err.response?.data?.message || err.message}`);
-        res.status(500).json({ error: "Gagal QRIS", detail: err.response?.data || err.message });
-    }
-});
 
 // 3. DOWNLOAD QRIS IMAGE
 app.get('/download-qr/:partnerReff', async (req, res) => {
