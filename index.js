@@ -40,32 +40,236 @@ function getExpiredTimestamp(minutesFromNow = 15) {
     return moment.tz('Asia/Jakarta').add(minutesFromNow, 'minutes').format('YYYYMMDDHHmmss');
 }
 
-function generatePartnerReff() {
-    return `INV-782372373627-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-}
 
-// 🔐 Signature Generators (Pola Objek)
-function generateSignaturePOST({ amount, expired, bank_code, partner_reff, customer_id, customer_name, customer_email, clientId, serverKey }) {
+// 🔐 Fungsi membuat signature untuk request POST VA
+function generateSignaturePOST({
+    amount,
+    expired,
+    bank_code,
+    partner_reff,
+    customer_id,
+    customer_name,
+    customer_email,
+    clientId,
+    serverKey
+}) {
     const path = '/transaction/create/va';
     const method = 'POST';
-    const rawValue = amount + expired + bank_code + partner_reff + customer_id + customer_name + customer_email + clientId;
+
+    const rawValue = amount + expired + bank_code + partner_reff +
+        customer_id + customer_name + customer_email + clientId;
     const cleaned = rawValue.replace(/[^0-9a-zA-Z]/g, "").toLowerCase();
+
     const signToString = path + method + cleaned;
-    const result = crypto.createHmac("sha256", serverKey).update(signToString).digest("hex");
-    console.log(`[SIG VA] Raw: ${cleaned} | Result: ${result}`);
-    return result;
+
+    return crypto.createHmac("sha256", serverKey).update(signToString).digest("hex");
 }
 
-function generateSignatureQRIS({ amount, expired, partner_reff, customer_id, customer_name, customer_email, clientId, serverKey }) {
+function generateSignatureQRIS({
+    amount,
+    expired,
+    partner_reff,
+    customer_id,
+    customer_name,
+    customer_email,
+    clientId,
+    serverKey
+}) {
     const path = '/transaction/create/qris';
     const method = 'POST';
-    const rawValue = amount + expired + partner_reff + customer_id + customer_name + customer_email + clientId;
+
+    const rawValue = amount + expired + partner_reff +
+        customer_id + customer_name + customer_email + clientId;
     const cleaned = rawValue.replace(/[^0-9a-zA-Z]/g, "").toLowerCase();
+
     const signToString = path + method + cleaned;
-    const result = crypto.createHmac("sha256", serverKey).update(signToString).digest("hex");
-    console.log(`[SIG QRIS] Raw: ${cleaned} | Result: ${result}`);
-    return result;
+
+    return crypto.createHmac("sha256", serverKey).update(signToString).digest("hex");
 }
+
+
+
+// 🧾 Fungsi membuat kode unik partner_reff
+function generatePartnerReff() {
+    const prefix = 'INV-782372373627';
+    const timestamp = Date.now();
+    const randomStr = crypto.randomBytes(4).toString('hex');
+    return `${prefix}-${timestamp}-${randomStr}`;
+}
+
+// ✅ Endpoint POST untuk membuat VA
+app.post('/create-va', async (req, res) => {
+    try {
+        console.log("📩 Request Body:", req.body);
+
+        const body = req.body;
+        const partner_reff = generatePartnerReff();
+        const expired = getExpiredTimestamp();
+        const url_callback = "https://topuplinku.siappgo.id/callback";
+
+        console.log("🆔 Generated partner_reff:", partner_reff, "| expired:", expired);
+
+        const signature = generateSignaturePOST({
+            amount: body.amount,
+            expired,
+            bank_code: body.bank_code,
+            partner_reff,
+            customer_id: body.customer_id,
+            customer_name: body.customer_name,
+            customer_email: body.customer_email,
+            clientId,
+            serverKey
+        });
+
+        console.log("🔑 Generated signature:", signature);
+
+        const payload = {
+            ...body,
+            partner_reff,
+            username,
+            pin,
+            expired,
+            signature,
+            url_callback
+        };
+
+        const headers = {
+            'client-id': clientId,
+            'client-secret': clientSecret
+        };
+
+        console.log("📤 Sending request to LinkQu:");
+        console.log("Payload:", payload);
+        console.log("Headers:", headers);
+
+        const url = 'https://api.linkqu.id/linkqu-partner/transaction/create/va';
+        const response = await axios.post(url, payload, { headers });
+        const result = response.data;
+
+        console.log("✅ Response from LinkQu:", result);
+
+
+
+        res.json(result);
+    } catch (err) {
+        console.error("❌ Gagal membuat VA:", err.message);
+        console.error("Detail error:", err.response?.data || err);
+
+        res.status(500).json({
+            error: "Gagal membuat VA",
+            detail: err.response?.data || err.message
+        });
+    }
+});
+
+
+
+
+app.post('/create-qris', async (req, res) => {
+    try {
+        const body = req.body;
+        console.log("📥 Incoming request body:", body);
+
+        const partner_reff = generatePartnerReff();
+        const expired = getExpiredTimestamp();
+        const url_callback = "https://topuplinku.siappgo.id/callback";
+
+        console.log("🧾 Generated partner_reff:", partner_reff);
+        console.log("⏳ Expired timestamp:", expired);
+
+        const signature = generateSignatureQRIS({
+            amount: body.amount,
+            expired,
+            partner_reff,
+            customer_id: body.customer_id,
+            customer_name: body.customer_name,
+            customer_email: body.customer_email,
+            clientId,
+            serverKey
+        });
+
+        console.log("🔏 Generated signature:", signature);
+
+        const payload = {
+            ...body,
+            partner_reff,
+            username,
+            pin,
+            expired,
+            signature,
+            url_callback
+        };
+
+        console.log("📦 Final payload to API:", payload);
+
+        const headers = {
+            'client-id': clientId,
+            'client-secret': clientSecret
+        };
+
+        const url = 'https://api.linkqu.id/linkqu-partner/transaction/create/qris';
+        const response = await axios.post(url, payload, { headers });
+
+        const result = response.data;
+        console.log("✅ API response from LinkQu:", result);
+
+        // 💾 Download QR image langsung
+        let qrisImageBuffer = null;
+        if (result?.imageqris) {
+            try {
+                console.log(`🌐 Downloading QR image from: ${result.imageqris}`);
+                const imgResp = await axios.get(result.imageqris.trim(), { responseType: 'arraybuffer' });
+                qrisImageBuffer = Buffer.from(imgResp.data);
+                console.log("✅ QR image downloaded successfully");
+            } catch (err) {
+                console.error("⚠️ Failed to download QRIS image:", err.message);
+            }
+        }
+
+        // 🕒 Gunakan waktu lokal server, bukan UTC
+        const now = new Date();
+        const mysqlDateTime = now.toISOString().slice(0, 19).replace('T', ' ');
+
+        const insertQuery = `
+            INSERT INTO inquiry_qris 
+            (partner_reff, customer_id, customer_name, amount, expired, customer_phone, customer_email, qris_url, qris_image, response_raw, created_at, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+        `;
+
+        await db.execute(insertQuery, [
+            partner_reff,
+            body.customer_id,
+            body.customer_name,
+            body.amount,
+            expired,
+            body.customer_phone || null,
+            body.customer_email,
+            result?.imageqris || null,
+            qrisImageBuffer,
+            JSON.stringify(result),
+            mysqlDateTime
+        ]);
+
+        console.log(`✅ Data QRIS berhasil disimpan ke database dengan created_at = ${mysqlDateTime}`);
+        res.json(result);
+
+    } catch (err) {
+        const errMsg = err.response?.data?.message || err.message;
+        const logMsg = `❌ Gagal membuat QRIS: ${errMsg}`;
+        console.error(logMsg);
+
+        if (err.response?.data) {
+            console.error("📛 Full error response from API:", err.response.data);
+        }
+
+        logToFile(logMsg);
+
+        res.status(500).json({
+            error: "Gagal membuat QRIS",
+            detail: err.response?.data || err.message
+        });
+    }
+});
 
 // --- ENDPOINTS ---
 
