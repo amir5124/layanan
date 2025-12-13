@@ -98,71 +98,93 @@ function generatePartnerReff() {
 }
 
 // ✅ Endpoint POST untuk membuat VA
-app.post('/create-va', async (req, res) => {
+// 1. CREATE VA (Final & Sinkron dengan Frontend)
+app.post('/create-va', uploadFields, async (req, res) => {
     try {
-        console.log("📩 Request Body:", req.body);
+        logToFile("📩 Request VA Masuk");
 
-        const body = req.body;
+        // Data dari Frontend (FormData)
+        const {
+            nama, email, nik, kk, item,
+            amount, method, biayaAdmin, nomorHp
+        } = req.body;
+
+        // Validasi Dasar
+        if (!amount || !method) {
+            return res.status(400).json({ error: "Amount dan Method (Bank Code) wajib diisi" });
+        }
+
         const partner_reff = generatePartnerReff();
-        const expired = getExpiredTimestamp();
+        const expired = getExpiredTimestamp(1440); // 24 Jam
+        const finalEmail = (email && email.trim() !== "") ? email : "linkutransport@gmail.com";
         const url_callback = "https://topuplinku.siappgo.id/callback";
 
-        console.log("🆔 Generated partner_reff:", partner_reff, "| expired:", expired);
-
+        // Generate Signature (Mapping field harus pas)
         const signature = generateSignaturePOST({
-            amount: body.amount,
-            expired,
-            bank_code: body.bank_code,
-            partner_reff,
-            customer_id: body.customer_id,
-            customer_name: body.customer_name,
-            customer_email: body.customer_email,
-            clientId,
-            serverKey
+            amount: amount,
+            expired: expired,
+            bank_code: method,       // Frontend kirim 'method' sebagai kode bank (e.g., 014)
+            partner_reff: partner_reff,
+            customer_id: nama,
+            customer_name: nama,
+            customer_email: finalEmail,
+            clientId: clientId,
+            serverKey: serverKey
         });
 
-        console.log("🔑 Generated signature:", signature);
-
+        // Payload untuk API LinkQu
         const payload = {
-            ...body,
-            partner_reff,
-            username,
-            pin,
-            expired,
-            signature,
-            url_callback
+            amount: amount,
+            bank_code: method,
+            partner_reff: partner_reff,
+            username: username,
+            pin: pin,
+            expired: expired,
+            signature: signature,
+            customer_id: nama,
+            customer_name: nama,
+            customer_email: finalEmail,
+            url_callback: url_callback
         };
 
         const headers = {
             'client-id': clientId,
-            'client-secret': clientSecret
+            'client-secret': clientSecret,
+            'Content-Type': 'application/json'
         };
 
-        console.log("📤 Sending request to LinkQu:");
-        console.log("Payload:", payload);
-        console.log("Headers:", headers);
-
-        const url = 'https://api.linkqu.id/linkqu-partner/transaction/create/va';
-        const response = await axios.post(url, payload, { headers });
+        logToFile(`📤 Mengirim VA ke LinkQu: ${partner_reff}`);
+        const response = await axios.post('https://api.linkqu.id/linkqu-partner/transaction/create/va', payload, { headers });
         const result = response.data;
 
-        console.log("✅ Response from LinkQu:", result);
+        // 🐘 Simpan ke Database (Tabel Orders)
+        await db.execute(
+            `INSERT INTO orders (
+                nama_paket, harga_paket, biaya_admin, total_bayar, 
+                nama_user, nomor_hp, nik, nomor_kk, email, 
+                metode_pembayaran, kode_bank, partner_reff, 
+                virtual_account, waktu_expired, status_pembayaran
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'VA', ?, ?, ?, ?, 'PENDING')`,
+            [
+                item, (amount - biayaAdmin), biayaAdmin, amount,
+                nama, nomorHp, nik, kk, finalEmail,
+                method, partner_reff, result.virtual_account,
+                moment(expired, 'YYYYMMDDHHmmss').format('YYYY-MM-DD HH:mm:ss')
+            ]
+        );
 
-
-
+        logToFile(`✅ VA Berhasil: ${result.virtual_account}`);
         res.json(result);
-    } catch (err) {
-        console.error("❌ Gagal membuat VA:", err.message);
-        console.error("Detail error:", err.response?.data || err);
 
+    } catch (err) {
+        const errorDetail = err.response?.data || err.message;
+        logToFile(`❌ Gagal membuat VA: ${JSON.stringify(errorDetail)}`);
         res.status(500).json({
             error: "Gagal membuat VA",
-            detail: err.response?.data || err.message
+            detail: errorDetail
         });
     }
 });
-
-
 
 
 app.post('/create-qris', async (req, res) => {
