@@ -22,7 +22,11 @@ app.use(express.json());
 const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID || 'ACxxxxxxxxxxxxxxxx';
 const TWILIO_AUTH = process.env.TWILIO_AUTH_TOKEN || 'xxxxxxxxxxxxxxxx';
 const TWILIO_WA_NUMBER = 'whatsapp:+62882005447472';
+const ADMIN_WA = 'whatsapp:+6282323907426'; // Nomor WhatsApp Admin
 const twilioClient = new twilio(TWILIO_SID, TWILIO_AUTH);
+
+console.log("SID:", TWILIO_SID);
+console.log("TOKEN:", TWILIO_AUTH);
 
 const clientId = "5f5aa496-7e16-4ca1-9967-33c768dac6c7";
 const clientSecret = "TM1rVhfaFm5YJxKruHo0nWMWC";
@@ -139,6 +143,10 @@ app.post('/create-va', uploadFields, async (req, res) => {
         const expired = getExpiredTimestamp(1440);
         const finalEmail = isValidEmail(email) ? email : DEFAULT_EMAIL;
 
+        // Ambil File Buffer
+        const ktpBuffer = req.files['ktp'] ? req.files['ktp'][0].buffer : null;
+        const selfieBuffer = req.files['selfie'] ? req.files['selfie'][0].buffer : null;
+
         const rawSignature = amount + expired + method + partner_reff + nama + nama + finalEmail + clientId;
         const signature = crypto.createHmac("sha256", serverKey).update('/transaction/create/vaPOST' + rawSignature.replace(/[^0-9a-zA-Z]/g, "").toLowerCase()).digest("hex");
 
@@ -148,8 +156,8 @@ app.post('/create-va', uploadFields, async (req, res) => {
             url_callback: "https://indosat.siappgo.id/callback"
         }, { headers: { 'client-id': clientId, 'client-secret': clientSecret } });
 
-        await db.execute(`INSERT INTO orders (nama_paket, harga_paket, biaya_admin, total_bayar, nama_user, nomor_hp, nik, nomor_kk, email, metode_pembayaran, kode_bank, partner_reff, virtual_account, waktu_expired, status_pembayaran) VALUES (?,?,?,?,?,?,?,?,?, 'VA',?,?,?,?, 'PENDING')`,
-            [item, (amount - biayaAdmin), biayaAdmin, amount, nama, nomorHp, nik, kk, email, method, partner_reff, response.data.virtual_account, moment(expired, 'YYYYMMDDHHmmss').format('YYYY-MM-DD HH:mm:ss')]);
+        await db.execute(`INSERT INTO orders (nama_paket, harga_paket, biaya_admin, total_bayar, nama_user, nomor_hp, nik, nomor_kk, email, metode_pembayaran, kode_bank, partner_reff, virtual_account, waktu_expired, status_pembayaran, foto_ktp, foto_selfie) VALUES (?,?,?,?,?,?,?,?,?, 'VA',?,?,?,?, 'PENDING', ?, ?)`,
+            [item, (amount - biayaAdmin), biayaAdmin, amount, nama, nomorHp, nik, kk, email, method, partner_reff, response.data.virtual_account, moment(expired, 'YYYYMMDDHHmmss').format('YYYY-MM-DD HH:mm:ss'), ktpBuffer, selfieBuffer]);
 
         await sendInvoiceEmail(email, { nama, item, amount, method, partner_reff, paymentCode: response.data.virtual_account }, false);
         res.json(response.data);
@@ -164,6 +172,10 @@ app.post('/create-qris', uploadFields, async (req, res) => {
         const expired = getExpiredTimestamp(30);
         const finalEmail = isValidEmail(email) ? email : DEFAULT_EMAIL;
 
+        // Ambil File Buffer
+        const ktpBuffer = req.files['ktp'] ? req.files['ktp'][0].buffer : null;
+        const selfieBuffer = req.files['selfie'] ? req.files['selfie'][0].buffer : null;
+
         const rawSignature = amount + expired + partner_reff + nama + nama + finalEmail + clientId;
         const signature = crypto.createHmac("sha256", serverKey).update('/transaction/create/qrisPOST' + rawSignature.replace(/[^0-9a-zA-Z]/g, "").toLowerCase()).digest("hex");
 
@@ -173,12 +185,23 @@ app.post('/create-qris', uploadFields, async (req, res) => {
             url_callback: "https://indosat.siappgo.id/callback"
         }, { headers: { 'client-id': clientId, 'client-secret': clientSecret } });
 
-        await db.execute(`INSERT INTO orders (nama_paket, harga_paket, biaya_admin, total_bayar, nama_user, nomor_hp, nik, nomor_kk, email, metode_pembayaran, kode_bank, partner_reff, qris_image_url, waktu_expired, status_pembayaran) VALUES (?,?,?,?,?,?,?,?,?, 'QRIS', 'QRIS',?,?,?, 'PENDING')`,
-            [item, (amount - biayaAdmin), biayaAdmin, amount, nama, nomorHp, nik, kk, email, partner_reff, response.data.imageqris, moment(expired, 'YYYYMMDDHHmmss').format('YYYY-MM-DD HH:mm:ss')]);
+        await db.execute(`INSERT INTO orders (nama_paket, harga_paket, biaya_admin, total_bayar, nama_user, nomor_hp, nik, nomor_kk, email, metode_pembayaran, kode_bank, partner_reff, qris_image_url, waktu_expired, status_pembayaran, foto_ktp, foto_selfie) VALUES (?,?,?,?,?,?,?,?,?, 'QRIS', 'QRIS',?,?,?, 'PENDING', ?, ?)`,
+            [item, (amount - biayaAdmin), biayaAdmin, amount, nama, nomorHp, nik, kk, email, partner_reff, response.data.imageqris, moment(expired, 'YYYYMMDDHHmmss').format('YYYY-MM-DD HH:mm:ss'), ktpBuffer, selfieBuffer]);
 
         await sendInvoiceEmail(email, { nama, item, amount, method: 'QRIS', partner_reff, paymentCode: 'Scan QR di Aplikasi' }, false);
         res.json(response.data);
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Endpoint untuk menampilkan gambar dari Database (untuk Twilio)
+app.get('/view-file/:type/:partnerReff', async (req, res) => {
+    try {
+        const column = req.params.type === 'ktp' ? 'foto_ktp' : 'foto_selfie';
+        const [rows] = await db.execute(`SELECT ${column} FROM orders WHERE partner_reff = ?`, [req.params.partnerReff]);
+        if (rows.length === 0 || !rows[0][column]) return res.status(404).send("File tidak ditemukan");
+        res.setHeader('Content-Type', 'image/jpeg');
+        res.send(rows[0][column]);
+    } catch (err) { res.status(500).send("Error"); }
 });
 
 app.post('/callback', async (req, res) => {
@@ -186,30 +209,58 @@ app.post('/callback', async (req, res) => {
     try {
         const { partner_reff, status, amount } = req.body;
         if (status === 'SUCCESS' || status === 'SETTLED') {
-            const [rows] = await db.execute("SELECT nama_user, nomor_hp, nama_paket, email, kode_bank FROM orders WHERE partner_reff = ? AND status_pembayaran = 'PENDING'", [partner_reff]);
+            const [rows] = await db.execute("SELECT nama_user, nomor_hp, nama_paket, email, kode_bank, nik, nomor_kk FROM orders WHERE partner_reff = ? AND status_pembayaran = 'PENDING'", [partner_reff]);
 
             if (rows.length > 0) {
                 const order = rows[0];
                 await db.execute("UPDATE orders SET status_pembayaran = 'PAID' WHERE partner_reff = ?", [partner_reff]);
 
-                // Kirim Notif Email Lunas
                 await sendInvoiceEmail(order.email, {
-                    nama: order.nama_user,
-                    item: order.nama_paket,
-                    amount: amount,
-                    method: order.kode_bank,
-                    partner_reff: partner_reff,
-                    paymentCode: partner_reff
+                    nama: order.nama_user, item: order.nama_paket, amount: amount,
+                    method: order.kode_bank, partner_reff: partner_reff, paymentCode: partner_reff
                 }, true);
 
-                // Kirim WhatsApp Twilio
+                const formattedAmount = `Rp${parseInt(amount).toLocaleString('id-ID')}`;
+
+                // 1. Kirim Notif ke User
                 try {
                     await twilioClient.messages.create({
                         from: TWILIO_WA_NUMBER,
                         to: `whatsapp:+${order.nomor_hp}`,
-                        body: `✅ PEMBAYARAN BERHASIL!\n\nHalo ${order.nama_user},\nPembayaran untuk ${order.nama_paket} sebesar Rp${parseInt(amount).toLocaleString('id-ID')} telah kami terima.\n\nStatus: SELESAI\nNo. Invoice: ${partner_reff}\n\nTerima kasih telah menggunakan layanan kami.`
+                        contentSid: 'HXe14f3da1c838a88828c64f8bee9e4db5', // Ganti dengan SID Template User
+                        contentVariables: JSON.stringify({
+                            "1": order.nama_user,
+                            "2": order.nama_paket,
+                            "3": formattedAmount,
+                            "4": partner_reff
+                        })
                     });
-                } catch (waErr) { logToFile(`WA Error: ${waErr.message}`); }
+                } catch (e) { logToFile(`WA User Error: ${e.message}`); }
+
+                // --- 2. KIRIM KE ADMIN (Menggunakan ContentSid Admin + Lampiran Foto) ---
+                try {
+                    const baseUrl = "https://indosat.siappgo.id";
+
+                    await twilioClient.messages.create({
+                        from: TWILIO_WA_NUMBER,
+                        to: ADMIN_WA,
+                        contentSid: 'HXbfafaa42afd50a8fb99d44e5cb45b043', // Ganti dengan SID Template Admin
+                        contentVariables: JSON.stringify({
+                            "1": order.nama_user,
+                            "2": order.nomor_hp,
+                            "3": order.nik,
+                            "4": order.nomor_kk,
+                            "5": order.nama_paket,
+                            "6": formattedAmount,
+                            "7": partner_reff
+                        }),
+                        // Twilio akan mengirimkan teks template, lalu diikuti file gambar
+                        mediaUrl: [
+                            `${baseUrl}/view-file/ktp/${partner_reff}`,
+                            `${baseUrl}/view-file/selfie/${partner_reff}`
+                        ]
+                    });
+                } catch (e) { logToFile(`WA Admin Error: ${e.message}`); }
             }
         }
         res.status(200).send("OK");
@@ -226,7 +277,6 @@ app.get('/check-status/:partnerReff', async (req, res) => {
             const [check] = await db.execute("SELECT status_pembayaran FROM orders WHERE partner_reff = ?", [req.params.partnerReff]);
             if (check[0].status_pembayaran !== 'PAID') {
                 await db.execute("UPDATE orders SET status_pembayaran = 'PAID' WHERE partner_reff = ?", [req.params.partnerReff]);
-                // Logika kirim email lunas bisa ditambahkan di sini jika perlu
             }
         }
         res.json(response.data);
