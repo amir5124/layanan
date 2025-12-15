@@ -233,7 +233,7 @@ app.post('/callback', async (req, res) => {
                     await twilioClient.messages.create({
                         from: TWILIO_WA_NUMBER,
                         to: ADMIN_WA,
-                        contentSid: 'HXbfafaa42afd50a8fb99d44e5cb45b043',
+                        contentSid: 'HX74dbb58641dde0f70da9437461c09723',
                         contentVariables: JSON.stringify({
                             "1": order.nama_user,
                             "2": order.nomor_hp, // Nomor Pembeli
