@@ -22,7 +22,7 @@ app.use(express.json());
 const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID || 'ACxxxxxxxxxxxxxxxx';
 const TWILIO_AUTH = process.env.TWILIO_AUTH_TOKEN || 'xxxxxxxxxxxxxxxx';
 const TWILIO_WA_NUMBER = 'whatsapp:+62882005447472';
-const ADMIN_WA = 'whatsapp:+6282323907426';
+const ADMIN_WA = 'whatsapp:+6282226666610';
 const CS_NUMBER = '082226666610';
 
 const twilioClient = new twilio(TWILIO_SID, TWILIO_AUTH);
