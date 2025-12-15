@@ -22,7 +22,7 @@ app.use(express.json());
 const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_WA_NUMBER = 'whatsapp:+62882005447472';
-const ADMIN_WA = 'whatsapp:+6282323907426';
+const ADMIN_WA = 'whatsapp:+6282226666610';
 const CS_NUMBER = '082226666610';
 
 const twilioClient = new twilio(TWILIO_SID, TWILIO_AUTH);
@@ -235,17 +235,12 @@ app.post('/callback', async (req, res) => {
                     await twilioClient.messages.create({
                         from: TWILIO_WA_NUMBER,
                         to: `whatsapp:+${order.nomor_hp}`,
-                        contentSid: 'HXe14f3da1c838a88828c64f8bee9e4db5',
+                        contentSid: 'HX45d732c394d15ceecc65a6ac4acd3f17',
                         contentVariables: JSON.stringify({
-                            "1": order.nama_user, "2": order.nama_paket, "3": formattedAmount, "4": partner_reff
+                            "1": order.nama_user, "2": order.nama_paket, "3": formattedAmount, "4": partner_reff, "5": order.catatan || "-"
                         })
                     });
-                    // Manual message info CS
-                    await twilioClient.messages.create({
-                        from: TWILIO_WA_NUMBER,
-                        to: `whatsapp:+${order.nomor_hp}`,
-                        body: `Jika ada kendala, hubungi CS kami di wa.me/${CS_NUMBER.replace(/^0/, '62')}`
-                    });
+
                 } catch (e) { logToFile(`WA User Error: ${e.message}`); }
 
                 // --- 4. KIRIM KE ADMIN (Hanya Template Teks, Tanpa Foto) ---
@@ -261,7 +256,7 @@ app.post('/callback', async (req, res) => {
                     await twilioClient.messages.create({
                         from: TWILIO_WA_NUMBER,
                         to: ADMIN_WA,
-                        contentSid: 'HX74dbb58641dde0f70da9437461c09723',
+                        contentSid: 'HX16c0ff76d4e3fd58aa14d0e67c6994e7',
                         contentVariables: adminContentVars,
                         // TIDAK ADA mediaUrl, sesuai permintaan
                     });
