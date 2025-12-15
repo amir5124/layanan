@@ -193,76 +193,66 @@ app.get('/view-file/:type/:partnerReff', async (req, res) => {
 app.post('/callback', async (req, res) => {
     logToFile(`📩 Callback: ${JSON.stringify(req.body)}`);
     try {
-        // Ambil data penting dari callback LinkQu
-        const { partner_reff, status, amount, username: callbackUsername } = req.body;
-
+        const { partner_reff, status, amount } = req.body;
         if (status === 'SUCCESS' || status === 'SETTLED') {
-            const [rows] = await db.execute(
-                "SELECT * FROM orders WHERE partner_reff = ? AND status_pembayaran = 'PENDING'",
-                [partner_reff]
-            );
+            const [rows] = await db.execute("SELECT * FROM orders WHERE partner_reff = ? AND status_pembayaran = 'PENDING'", [partner_reff]);
 
             if (rows.length > 0) {
                 const order = rows[0];
                 await db.execute("UPDATE orders SET status_pembayaran = 'PAID' WHERE partner_reff = ?", [partner_reff]);
 
+                // Kirim Email Lunas
+                await sendInvoiceEmail(order.email, {
+                    nama: order.nama_user, item: order.nama_paket, amount: amount,
+                    method: order.kode_bank, partner_reff: partner_reff, paymentCode: partner_reff, catatan: order.catatan
+                }, true);
+
                 const formattedAmount = `Rp${parseInt(amount).toLocaleString('id-ID')}`;
                 const baseUrl = "https://indosat.siappgo.id";
 
-                // Siapkan data variabel yang akan dikirim (Sesuai Template Admin 9 Variabel)
-                const sharedContentVariables = JSON.stringify({
-                    "1": order.nama_user,
-                    "2": order.nomor_hp,
-                    "3": order.nik,
-                    "4": order.nomor_kk,
-                    "5": order.nama_paket,
-                    "6": formattedAmount,
-                    "7": partner_reff,
-                    "8": order.catatan || "-",
-                    "9": callbackUsername || "LI9019VKS" // Isi variabel ke-9 yang sering error
-                });
-
-                // --- 1. KIRIM KE USER (Menggunakan SID Admin) ---
+                // --- 1. KIRIM KE USER (ContentSid User) ---
                 try {
                     await twilioClient.messages.create({
                         from: TWILIO_WA_NUMBER,
                         to: `whatsapp:+${order.nomor_hp}`,
-                        contentSid: 'HX74dbb58641dde0f70da9437461c09723', // Pakai SID Admin
-                        contentVariables: sharedContentVariables
+                        contentSid: 'HXe14f3da1c838a88828c64f8bee9e4db5',
+                        contentVariables: JSON.stringify({
+                            "1": order.nama_user, "2": order.nama_paket, "3": formattedAmount, "4": partner_reff
+                        })
                     });
-                } catch (e) {
-                    logToFile(`WA User Error: ${e.message}`);
-                }
+                    // Manual message info CS
+                    await twilioClient.messages.create({
+                        from: TWILIO_WA_NUMBER,
+                        to: `whatsapp:+${order.nomor_hp}`,
+                        body: `Jika ada kendala, hubungi CS kami di wa.me/${CS_NUMBER.replace(/^0/, '62')}`
+                    });
+                } catch (e) { logToFile(`WA User Error: ${e.message}`); }
 
-                // --- 2. KIRIM KE ADMIN (Menggunakan SID Admin + Media) ---
+                // --- 2. KIRIM KE ADMIN (ContentSid Admin + Lampiran Foto) ---
                 try {
                     await twilioClient.messages.create({
                         from: TWILIO_WA_NUMBER,
                         to: ADMIN_WA,
                         contentSid: 'HX74dbb58641dde0f70da9437461c09723',
-                        contentVariables: sharedContentVariables,
-                        mediaUrl: [
-                            `${baseUrl}/view-file/ktp/${partner_reff}`,
-                            `${baseUrl}/view-file/selfie/${partner_reff}`
-                        ]
+                        contentVariables: JSON.stringify({
+                            "1": order.nama_user,
+                            "2": order.nomor_hp, // Nomor Pembeli
+                            "3": order.nik,
+                            "4": order.nomor_kk,
+                            "5": order.nama_paket,
+                            "6": formattedAmount,
+                            "7": partner_reff,
+                            "8": order.catatan || "-"
+                        }),
+                        mediaUrl: [`${baseUrl}/view-file/ktp/${partner_reff}`, `${baseUrl}/view-file/selfie/${partner_reff}`]
                     });
-                } catch (e) {
-                    logToFile(`WA Admin Error: ${e.message}`);
-                }
-
-                // Kirim Email (Opsional, tetap jalankan)
-                await sendInvoiceEmail(order.email, {
-                    nama: order.nama_user, item: order.nama_paket, amount: amount,
-                    method: order.kode_bank, partner_reff: partner_reff, paymentCode: partner_reff, catatan: order.catatan
-                }, true);
+                } catch (e) { logToFile(`WA Admin Error: ${e.message}`); }
             }
         }
         res.status(200).send("OK");
-    } catch (err) {
-        logToFile(`Fatal Callback Error: ${err.message}`);
-        res.status(500).send("Error");
-    }
+    } catch (err) { res.status(500).send("Error"); }
 });
+
 app.get('/check-status/:partnerReff', async (req, res) => {
     try {
         const response = await axios.get(`https://api.linkqu.id/linkqu-partner/transaction/payment/checkstatus`, {
