@@ -19,8 +19,8 @@ app.use(express.json());
 // 🔐 KONFIGURASI KREDENSIAL
 // ==========================================
 
-const TWILIO_SID = process.env.TWILIO_SID;
-const TWILIO_AUTH = process.env.TWILIO_AUTH;
+const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_WA_NUMBER = 'whatsapp:+62882005447472';
 const ADMIN_WA = 'whatsapp:+6282226666610';
 const CS_NUMBER = '082226666610';
