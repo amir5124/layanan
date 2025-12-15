@@ -20,7 +20,7 @@ app.use(express.json());
 // ==========================================
 
 const TWILIO_SID = 'AC24e2bb8c03641bf91e18f0ba265cb639';
-const TWILIO_AUTH = 'fa7057054f2b50cce17e11de70fc67d4';
+const TWILIO_AUTH = '67f7b04e530badcc3c480b8c21ebe462';
 const TWILIO_WA_NUMBER = 'whatsapp:+62882005447472';
 const ADMIN_WA = 'whatsapp:+6282226666610';
 const CS_NUMBER = '082226666610';
