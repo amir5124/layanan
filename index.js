@@ -192,79 +192,65 @@ app.get('/view-file/:type/:partnerReff', async (req, res) => {
 
 app.post('/callback', async (req, res) => {
     logToFile(`📩 Callback: ${JSON.stringify(req.body)}`);
-
     try {
-        // Ambil data dari callback body
-        // Tambahkan username di sini agar bisa digunakan atau agar tidak dianggap missing
-        const { partner_reff, status, amount, username } = req.body;
-
+        const { partner_reff, status, amount } = req.body;
         if (status === 'SUCCESS' || status === 'SETTLED') {
-            const [rows] = await db.execute(
-                "SELECT * FROM orders WHERE partner_reff = ? AND status_pembayaran = 'PENDING'",
-                [partner_reff]
-            );
+            const [rows] = await db.execute("SELECT * FROM orders WHERE partner_reff = ? AND status_pembayaran = 'PENDING'", [partner_reff]);
 
             if (rows.length > 0) {
                 const order = rows[0];
-
-                // Update status di database
                 await db.execute("UPDATE orders SET status_pembayaran = 'PAID' WHERE partner_reff = ?", [partner_reff]);
 
-                // Kirim Email
+                // Kirim Email Lunas
                 await sendInvoiceEmail(order.email, {
                     nama: order.nama_user, item: order.nama_paket, amount: amount,
                     method: order.kode_bank, partner_reff: partner_reff, paymentCode: partner_reff, catatan: order.catatan
                 }, true);
 
                 const formattedAmount = `Rp${parseInt(amount).toLocaleString('id-ID')}`;
+                const baseUrl = "https://indosat.siappgo.id";
 
-                // --- 1. KIRIM KE USER (Sesuai Template 4 Variabel) ---
+                // --- 1. KIRIM KE USER (ContentSid User) ---
                 try {
                     await twilioClient.messages.create({
                         from: TWILIO_WA_NUMBER,
                         to: `whatsapp:+${order.nomor_hp}`,
                         contentSid: 'HXe14f3da1c838a88828c64f8bee9e4db5',
                         contentVariables: JSON.stringify({
-                            "1": order.nama_user,  // {{1}} Halo {nama}
-                            "2": order.nama_paket, // {{2}} paket {item}
-                            "3": formattedAmount,  // {{3}} sebesar {harga}
-                            "4": partner_reff      // {{4}} No. Invoice {id}
+                            "1": order.nama_user, "2": order.nama_paket, "3": formattedAmount, "4": partner_reff
                         })
                     });
-                } catch (e) {
-                    logToFile(`WA User Error: ${e.message}`);
-                }
+                    // Manual message info CS
+                    await twilioClient.messages.create({
+                        from: TWILIO_WA_NUMBER,
+                        to: `whatsapp:+${order.nomor_hp}`,
+                        body: `Jika ada kendala, hubungi CS kami di wa.me/${CS_NUMBER.replace(/^0/, '62')}`
+                    });
+                } catch (e) { logToFile(`WA User Error: ${e.message}`); }
 
-                // --- 2. KIRIM KE ADMIN ---
+                // --- 2. KIRIM KE ADMIN (ContentSid Admin + Lampiran Foto) ---
                 try {
-                    const baseUrl = "https://indosat.siappgo.id";
                     await twilioClient.messages.create({
                         from: TWILIO_WA_NUMBER,
                         to: ADMIN_WA,
                         contentSid: 'HX74dbb58641dde0f70da9437461c09723',
                         contentVariables: JSON.stringify({
                             "1": order.nama_user,
-                            "2": order.nomor_hp,
+                            "2": order.nomor_hp, // Nomor Pembeli
                             "3": order.nik,
                             "4": order.nomor_kk,
                             "5": order.nama_paket,
                             "6": formattedAmount,
                             "7": partner_reff,
-                            "8": order.catatan || "-",
-                            "9": username || "Tidak Ada" // Masukkan username dari callback ke sini
+                            "8": order.catatan || "-"
                         }),
                         mediaUrl: [`${baseUrl}/view-file/ktp/${partner_reff}`, `${baseUrl}/view-file/selfie/${partner_reff}`]
                     });
-                } catch (e) {
-                    logToFile(`WA Admin Error: ${e.message} integrasi dengan twilio`);
-                }
+                } catch (e) { logToFile(`WA Admin Error: ${e.message}`); }
             }
         }
         res.status(200).send("OK");
-    } catch (err) {
-        logToFile(`System Error: ${err.message}`);
-        res.status(500).send("Error");
-    }
+    } catch (err) { res.status(500).send("Error"); }
 });
 
 app.get('/check-status/:partnerReff', async (req, res) => {
