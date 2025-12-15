@@ -22,7 +22,7 @@ app.use(express.json());
 const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_WA_NUMBER = 'whatsapp:+62882005447472';
-const ADMIN_WA = 'whatsapp:+6282226666610';
+const ADMIN_WA = 'whatsapp:+6282323907426';
 const CS_NUMBER = '082226666610';
 
 const twilioClient = new twilio(TWILIO_SID, TWILIO_AUTH);
@@ -90,7 +90,8 @@ function generatePartnerReff() {
     return `INV-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 }
 
-async function sendInvoiceEmail(toEmail, data, isPaid = false) {
+// --- MODIFIKASI: Menambahkan parameter attachments ---
+async function sendInvoiceEmail(toEmail, data, isPaid = false, attachments = []) {
     const targetEmail = isValidEmail(toEmail) ? toEmail : DEFAULT_EMAIL;
     const bankName = BANK_MAP[data.method] || data.method;
     const subject = isPaid ? `[LUNAS] Pembayaran Berhasil ${data.partner_reff}` : `Tagihan Pembayaran ${data.partner_reff}`;
@@ -115,7 +116,8 @@ async function sendInvoiceEmail(toEmail, data, isPaid = false) {
                 </div>
                 <hr>
                 <p style="text-align:center; font-size:12px;">Butuh bantuan? Hubungi CS: <b>${CS_NUMBER}</b></p>
-            </div>`
+            </div>`,
+        attachments: attachments // Tambahkan lampiran
     };
     try { await transporter.sendMail(mailOptions); } catch (e) { logToFile(`Email Error: ${e.message}`); }
 }
@@ -147,7 +149,7 @@ app.post('/create-va', uploadFields, async (req, res) => {
         await db.execute(`INSERT INTO orders (nama_paket, harga_paket, biaya_admin, total_bayar, nama_user, nomor_hp, nik, nomor_kk, email, metode_pembayaran, kode_bank, partner_reff, virtual_account, waktu_expired, status_pembayaran, foto_ktp, foto_selfie, catatan) VALUES (?,?,?,?,?,?,?,?,?, 'VA',?,?,?,?, 'PENDING', ?, ?, ?)`,
             [item, (amount - biayaAdmin), biayaAdmin, amount, nama, nomorHp, nik, kk, email, method, partner_reff, response.data.virtual_account, moment(expired, 'YYYYMMDDHHmmss').format('YYYY-MM-DD HH:mm:ss'), ktpBuffer, selfieBuffer, catatan || null]);
 
-        await sendInvoiceEmail(email, { nama, item, amount, method, partner_reff, paymentCode: response.data.virtual_account, catatan }, false);
+        await sendInvoiceEmail(email, { nama, item, amount, method, partner_reff, paymentCode: response.data.virtual_account, catatan }, false, []);
         res.json(response.data);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -175,7 +177,7 @@ app.post('/create-qris', uploadFields, async (req, res) => {
         await db.execute(`INSERT INTO orders (nama_paket, harga_paket, biaya_admin, total_bayar, nama_user, nomor_hp, nik, nomor_kk, email, metode_pembayaran, kode_bank, partner_reff, qris_image_url, waktu_expired, status_pembayaran, foto_ktp, foto_selfie, catatan) VALUES (?,?,?,?,?,?,?,?,?, 'QRIS', 'QRIS',?,?,?, 'PENDING', ?, ?, ?)`,
             [item, (amount - biayaAdmin), biayaAdmin, amount, nama, nomorHp, nik, kk, email, partner_reff, response.data.imageqris, moment(expired, 'YYYYMMDDHHmmss').format('YYYY-MM-DD HH:mm:ss'), ktpBuffer, selfieBuffer, catatan || null]);
 
-        await sendInvoiceEmail(email, { nama, item, amount, method: 'QRIS', partner_reff, paymentCode: 'Scan QR di Aplikasi', catatan }, false);
+        await sendInvoiceEmail(email, { nama, item, amount, method: 'QRIS', partner_reff, paymentCode: 'Scan QR di Aplikasi', catatan }, false, []);
         res.json(response.data);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -190,27 +192,45 @@ app.get('/view-file/:type/:partnerReff', async (req, res) => {
     } catch (err) { res.status(500).send("Error"); }
 });
 
+// --- MODIFIKASI FUNGSI CALLBACK ---
 app.post('/callback', async (req, res) => {
     logToFile(`📩 Callback: ${JSON.stringify(req.body)}`);
     try {
-        const { partner_reff, status, amount } = req.body;
+        // Ambil 'username' dari body callback LinkQu
+        const { partner_reff, status, amount, username: callbackUsername } = req.body;
+
         if (status === 'SUCCESS' || status === 'SETTLED') {
+            // Ambil SEMUA data order, termasuk foto_ktp dan foto_selfie
             const [rows] = await db.execute("SELECT * FROM orders WHERE partner_reff = ? AND status_pembayaran = 'PENDING'", [partner_reff]);
 
             if (rows.length > 0) {
                 const order = rows[0];
                 await db.execute("UPDATE orders SET status_pembayaran = 'PAID' WHERE partner_reff = ?", [partner_reff]);
 
-                // Kirim Email Lunas
-                await sendInvoiceEmail(order.email, {
+                const formattedAmount = `Rp${parseInt(amount).toLocaleString('id-ID')}`;
+
+                // Siapkan data email dasar
+                const emailData = {
                     nama: order.nama_user, item: order.nama_paket, amount: amount,
                     method: order.kode_bank, partner_reff: partner_reff, paymentCode: partner_reff, catatan: order.catatan
-                }, true);
+                };
 
-                const formattedAmount = `Rp${parseInt(amount).toLocaleString('id-ID')}`;
-                const baseUrl = "https://indosat.siappgo.id";
+                // --- 1. KIRIM EMAIL KE PENGGUNA (Invoice Lunas Saja) ---
+                await sendInvoiceEmail(order.email, emailData, true, []);
 
-                // --- 1. KIRIM KE USER (ContentSid User) ---
+                // --- 2. KIRIM EMAIL KE ADMIN (DENGAN LAMPIRAN KTP & SELFIE) ---
+                const adminAttachments = [];
+                if (order.foto_ktp) {
+                    adminAttachments.push({ filename: `KTP_${order.partner_reff}.jpg`, content: order.foto_ktp, contentType: 'image/jpeg' });
+                }
+                if (order.foto_selfie) {
+                    adminAttachments.push({ filename: `SELFIE_${order.partner_reff}.jpg`, content: order.foto_selfie, contentType: 'image/jpeg' });
+                }
+
+                await sendInvoiceEmail(DEFAULT_EMAIL, emailData, true, adminAttachments);
+
+
+                // --- 3. KIRIM KE USER (ContentSid User) ---
                 try {
                     await twilioClient.messages.create({
                         from: TWILIO_WA_NUMBER,
@@ -228,23 +248,22 @@ app.post('/callback', async (req, res) => {
                     });
                 } catch (e) { logToFile(`WA User Error: ${e.message}`); }
 
-                // --- 2. KIRIM KE ADMIN (ContentSid Admin + Lampiran Foto) ---
+                // --- 4. KIRIM KE ADMIN (Hanya Template Teks, Tanpa Foto) ---
                 try {
+                    // Siapkan Content Variables dengan variabel ke-9 (username) untuk mencegah error
+                    const adminContentVars = JSON.stringify({
+                        "1": order.nama_user, "2": order.nomor_hp, "3": order.nik, "4": order.nomor_kk,
+                        "5": order.nama_paket, "6": formattedAmount, "7": partner_reff,
+                        "8": order.catatan || "-"
+
+                    });
+
                     await twilioClient.messages.create({
                         from: TWILIO_WA_NUMBER,
                         to: ADMIN_WA,
                         contentSid: 'HX74dbb58641dde0f70da9437461c09723',
-                        contentVariables: JSON.stringify({
-                            "1": order.nama_user,
-                            "2": order.nomor_hp, // Nomor Pembeli
-                            "3": order.nik,
-                            "4": order.nomor_kk,
-                            "5": order.nama_paket,
-                            "6": formattedAmount,
-                            "7": partner_reff,
-                            "8": order.catatan || "-"
-                        }),
-                        mediaUrl: [`${baseUrl}/view-file/ktp/${partner_reff}`, `${baseUrl}/view-file/selfie/${partner_reff}`]
+                        contentVariables: adminContentVars,
+                        // TIDAK ADA mediaUrl, sesuai permintaan
                     });
                 } catch (e) { logToFile(`WA Admin Error: ${e.message}`); }
             }
