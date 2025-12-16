@@ -96,6 +96,21 @@ async function sendInvoiceEmail(toEmail, data, isPaid = false, attachments = [])
     const bankName = BANK_MAP[data.method] || data.method;
     const subject = isPaid ? `[LUNAS] Pembayaran Berhasil ${data.partner_reff}` : `Tagihan Pembayaran ${data.partner_reff}`;
 
+    // --- LOGIKA TAMPILAN NIK & KK (Hanya untuk Admin) ---
+    let additionalInfo = '';
+    // Memeriksa jika data NIK dan KK ada di objek data (Hanya dikirim untuk Admin)
+    if (data.nik && data.nomor_kk) {
+        additionalInfo = `
+            <hr style="margin-top: 15px; margin-bottom: 15px;">
+            <p style="font-weight: bold; color: #333;">Data Pelanggan (Verifikasi)</p>
+            <p>
+                <b>NIK:</b> ${data.nik}<br>
+                <b>Nomor KK:</b> ${data.nomor_kk}
+            </p>
+        `;
+    }
+    // ----------------------------------------------------
+
     const mailOptions = {
         from: `"Indosat Ooredoo Payment" <${DEFAULT_EMAIL}>`,
         to: targetEmail,
@@ -110,14 +125,15 @@ async function sendInvoiceEmail(toEmail, data, isPaid = false, attachments = [])
                    <b>Total:</b> Rp${parseInt(data.amount).toLocaleString('id-ID')}<br>
                    <b>Metode:</b> ${bankName}</p>
                 ${data.catatan ? `<p><b>Catatan:</b> ${data.catatan}</p>` : ''}
-                <div style="background: #f4f4f4; padding: 15px; text-align: center;">
+                
+                ${additionalInfo} <div style="background: #f4f4f4; padding: 15px; text-align: center;">
                     <span style="font-size: 12px;">${isPaid ? 'ID REFERENSI' : 'KODE BAYAR / VA'}:</span><br>
                     <b style="font-size: 20px; color: #333;">${data.paymentCode}</b>
                 </div>
                 <hr>
                 <p style="text-align:center; font-size:12px;">Butuh bantuan? Hubungi CS: <b>${CS_NUMBER}</b></p>
             </div>`,
-        attachments: attachments // Tambahkan lampiran
+        attachments: attachments
     };
     try { await transporter.sendMail(mailOptions); } catch (e) { logToFile(`Email Error: ${e.message}`); }
 }
@@ -209,16 +225,23 @@ app.post('/callback', async (req, res) => {
 
                 const formattedAmount = `Rp${parseInt(amount).toLocaleString('id-ID')}`;
 
-                // Siapkan data email dasar
-                const emailData = {
+                // Data dasar untuk EMAIL USER (tanpa NIK/KK)
+                const emailDataUser = {
                     nama: order.nama_user, item: order.nama_paket, amount: amount,
                     method: order.kode_bank, partner_reff: partner_reff, paymentCode: partner_reff, catatan: order.catatan
                 };
 
-                // --- 1. KIRIM EMAIL KE PENGGUNA (Invoice Lunas Saja) ---
-                await sendInvoiceEmail(order.email, emailData, true, []);
+                // Data lengkap untuk EMAIL ADMIN (DENGAN NIK/KK)
+                const emailDataAdmin = {
+                    ...emailDataUser, // Salin semua data user
+                    nik: order.nik,
+                    nomor_kk: order.nomor_kk // Menggunakan nama kolom yang benar
+                };
 
-                // --- 2. KIRIM EMAIL KE ADMIN (DENGAN LAMPIRAN KTP & SELFIE) ---
+                // --- 1. KIRIM EMAIL KE PENGGUNA (Invoice Lunas Saja) ---
+                await sendInvoiceEmail(order.email, emailDataUser, true, []);
+
+                // --- 2. KIRIM EMAIL KE ADMIN (DENGAN NIK/KK & LAMPIRAN KTP & SELFIE) ---
                 const adminAttachments = [];
                 if (order.foto_ktp) {
                     adminAttachments.push({ filename: `KTP_${order.partner_reff}.jpg`, content: order.foto_ktp, contentType: 'image/jpeg' });
@@ -227,10 +250,10 @@ app.post('/callback', async (req, res) => {
                     adminAttachments.push({ filename: `SELFIE_${order.partner_reff}.jpg`, content: order.foto_selfie, contentType: 'image/jpeg' });
                 }
 
-                await sendInvoiceEmail(DEFAULT_EMAIL, emailData, true, adminAttachments);
+                await sendInvoiceEmail(DEFAULT_EMAIL, emailDataAdmin, true, adminAttachments);
 
 
-                // --- 3. KIRIM KE USER (ContentSid User) ---
+                // --- 3. KIRIM KE USER (WhatsApp) ---
                 try {
                     await twilioClient.messages.create({
                         from: TWILIO_WA_NUMBER,
@@ -243,14 +266,13 @@ app.post('/callback', async (req, res) => {
 
                 } catch (e) { logToFile(`WA User Error: ${e.message}`); }
 
-                // --- 4. KIRIM KE ADMIN (Hanya Template Teks, Tanpa Foto) ---
+                // --- 4. KIRIM KE ADMIN (WhatsApp) ---
                 try {
-                    // Siapkan Content Variables dengan variabel ke-9 (username) untuk mencegah error
+                    // Data WA Admin sudah menyertakan NIK dan Nomor KK
                     const adminContentVars = JSON.stringify({
                         "1": order.nama_user, "2": order.nomor_hp, "3": order.nik, "4": order.nomor_kk,
                         "5": order.nama_paket, "6": formattedAmount, "7": partner_reff,
                         "8": order.catatan || "-"
-
                     });
 
                     await twilioClient.messages.create({
@@ -258,7 +280,6 @@ app.post('/callback', async (req, res) => {
                         to: ADMIN_WA,
                         contentSid: 'HX16c0ff76d4e3fd58aa14d0e67c6994e7',
                         contentVariables: adminContentVars,
-                        // TIDAK ADA mediaUrl, sesuai permintaan
                     });
                 } catch (e) { logToFile(`WA Admin Error: ${e.message}`); }
             }
